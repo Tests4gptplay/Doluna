@@ -1,117 +1,64 @@
 # DoLuna Agent Contract
 
-## FIRST RULE: Luna is relay-only
+DoLuna is a small bridge between Dot and a Short Task Runner.
 
-**For DoLuna relay turns, Luna is a transport adapter, not the task Worker.**
-
-Read `FOREGROUND.md` before taking any relay action.
-
-When Dot supplies a DoLuna relay envelope:
-
-1. Do not solve the underlying task.
-2. Do not analyze, summarize, rewrite, optimize, decompose, or improve the payload.
-3. Perform only the minimum identity checks required by `FOREGROUND.md`.
-4. Forward the exact request to the configured Short Task request path without changing its semantic payload.
-5. Return the write/dispatch receipt.
-6. Stop.
-7. If the write/tool action fails, return the exact error and stop.
-
-Understanding and deciding the business task belongs to Dot.
-
-## Project structure Dot must understand
-
-DoLuna has separate read and write/execute paths:
+## Architecture
 
 ```text
-READ PATH
-Dot -> Git repository state / results -> Dot
+READ
+Dot -> Git state / results -> Dot
 
-WRITE / EXECUTE PATH
+WRITE / EXECUTE
 Dot
-  -> fully formed DoLuna envelope
-  -> Luna Work relay
-  -> exact Git write:
-     requests/<task_id>/request.json
-  -> .github/workflows/short-task.yml
-  -> cah-shot
-  -> runner/execute_request.ps1
-  -> results/<task_id>/result.json
-  -> Git
-  -> Dot reads result directly
+ -> builds the complete request
+ -> Luna Work relay
+ -> requests/<task_id>/request.json
+ -> .github/workflows/short-task.yml
+ -> cah-shot
+ -> runner/execute_request.ps1
+ -> results/<task_id>/result.json
+ -> Git
+ -> Dot reads the result
 ```
 
-Dot is the Git reader and semantic owner. Luna is not a repository-inspection layer and is not a result-reading layer.
+## Roles
 
-Canonical files:
+### Dot
 
-- `FOREGROUND.md` — Luna relay semantic contract.
+Dot is the semantic owner.
+
+Dot reads the relevant Git state directly, decides what should happen, builds the complete Short Task request, and later reads the result directly from Git.
+
+### Luna
+
+Luna is the write relay.
+
+Luna receives a complete request from Dot and writes it to the requested Git path. Luna does not need project context beyond what is required to perform that write.
+
+### Short Task Runner
+
+The Runner executes the request and writes the durable result.
+
+## Canonical files
+
+- `FOREGROUND.md` — Luna relay behavior.
 - `docs/PROTOCOL.md` — request/result protocol.
-- `schema/request.schema.json` — v1 request shape.
-- `.github/workflows/short-task.yml` — request admission and Runner dispatch.
-- `runner/execute_request.ps1` — deterministic Windows executor.
-- `requests/<task_id>/request.json` — immutable dispatch request.
-- `results/<task_id>/result.json` — durable execution result.
-- `skills/index.json` — optional compact skill index for non-relay callers only.
-- `adapters/doluna/RELAY_PROMPT.md` — portable Luna relay prompt mirror.
+- `schema/request.schema.json` — request shape.
+- `.github/workflows/short-task.yml` — Git-to-Runner dispatch.
+- `runner/execute_request.ps1` — Windows executor.
+- `requests/<task_id>/request.json` — task request.
+- `results/<task_id>/result.json` — task result.
 
-Dot should read the relevant Git state directly, reason about the task, construct the complete request, and later read the result directly. Luna should only perform the exact Git mutation needed to submit that request.
-
-## Canonical state flow
+## State flow
 
 ```text
-request absent
-  -> request committed
-  -> workflow admitted
-  -> cah-shot executing
-  -> result committed
-  -> Dot verifies/evaluates
+Dot reads state
+ -> Dot creates request
+ -> Luna writes request
+ -> Runner executes
+ -> result is written
+ -> Dot reads result
+ -> Dot decides next action
 ```
 
-A request write means only `DISPATCH_ACCEPTED`. It is not task completion.
-
-A workflow start, Runner pickup, Luna acknowledgement, cache file, or stdout alone is not completion.
-
-## Short Task scope
-
-Use this execution layer for work that is small, concrete, independently bounded, and verifiable from a bounded Runner operation.
-
-If work grows into a long experiment, multi-stage project, repeated replanning loop, or coordinated workload, preserve useful state and return control to Dot or another managed execution system.
-
-Do not disguise managed work as an endless sequence of opaque Short Tasks.
-
-## Exact execution
-
-The v1 executor:
-
-- supports `kind=command`;
-- accepts `pwsh` or `cmd`;
-- enforces a maximum 10-minute command timeout;
-- targets the dedicated `cah-shot` Runner;
-- exposes a task-local cache directory;
-- restricts explicit working directories to configured allowed roots;
-- captures bounded stdout/stderr tails into the result;
-- records nonzero, timeout, and invalid outcomes rather than claiming success.
-
-For exact-script requests, preserve the exact execution identity.
-
-## Skills
-
-DoLuna relay turns do not load Skills.
-
-If another semantic caller uses this repository for direct-bounded domain work, it may read `skills/index.json` first and load only relevant referenced Skills.
-
-## Privacy and secrets
-
-Do not put credentials, tokens, cookies, passwords, private keys, or provider secrets in request files.
-
-This source repository is public. Real private requests/results should use a private runtime transport/repository.
-
-Commands and stdout/stderr can themselves contain sensitive values. Treat request/result history accordingly.
-
-## Failure behavior
-
-Do not retry by silently changing the payload.
-
-If relay write fails, return the exact error.
-
-If execution fails, Dot evaluates the durable result and decides the next action.
+A request write means the task was dispatched. The result file carries the execution outcome.
