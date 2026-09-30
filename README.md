@@ -19,34 +19,34 @@
 **DoLuna** is an experimental project that connects a persistent Dot planner to a standalone Short Task execution layer through an intentionally thin Luna relay.
 
 ```text
-                  Dot
-        persistent planner / brain
-                   |
-        creates a tiny Luna Work task
-                   v
-                 Luna
-          transport relay only
-                   |
-        writes one Short Task request
-                   v
-          Short Task Harness
-                   |
-              cah-shot
-                   |
-       local / self-hosted execution
-                   |
-            durable result
-                   ^
-                   |
-                  Dot
+                         Dot
+            planner / semantic owner
+              /                    \
+             / READ                 \ WRITE / DISPATCH
+            v                        v
+           Git                  Luna Work
+   repo state + results         relay only
+            ^                        |
+            |                        | exact Git write
+            |                        v
+            |              requests/<task_id>/request.json
+            |                        |
+            |                        v
+            |                 Short Task workflow
+            |                        |
+            |                        v
+            +-------------------- cah-shot
+                         executes and writes result
 ```
 
 The project intentionally separates four concerns:
 
-- **Dot** — long-lived context, planning, decisions, result evaluation.
-- **Luna** — transport only.
-- **Git/request-result transport** — durable task handoff.
+- **Dot** — reads Git directly, owns context/planning/decisions, and reads/evaluates durable results directly.
+- **Luna** — write/dispatch relay only; it receives a fully formed request from Dot and performs the required Git mutation.
+- **Git/request-result transport** — durable state, request, and result surface.
 - **Short Task Runner** — deterministic host execution.
+
+The normal read path does **not** pass through Luna. Luna is invoked only when Dot needs the Work-side relay to create the exact Git request that triggers execution.
 
 The key experiment is whether a general-purpose model can be constrained to behave like a very thin protocol bridge while all substantive task reasoning stays with Dot.
 
@@ -57,10 +57,12 @@ DoLuna does not try to build another full agent inside Work.
 Instead, the intended loop is:
 
 ```text
-Dot decides
-  -> Luna forwards
+Dot reads Git directly
+  -> Dot decides
+  -> Luna writes exact request to Git
   -> Runner executes
-  -> Dot evaluates
+  -> Runner writes result to Git
+  -> Dot reads Git directly and evaluates
 ```
 
 Luna should not inspect a project, plan a repair, choose a command, or reason about the host task. It should only carry an already-decided request across the boundary.
