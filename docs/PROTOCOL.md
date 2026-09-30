@@ -107,3 +107,23 @@ An accepted request is an authorized remote command request.
 Repository request-write authority is therefore equivalent to command authority on the Shot Runner within configured allowed roots.
 
 Request contents and result stdout/stderr may contain sensitive information. Use a private runtime transport for private workloads.
+
+
+## DoLuna transport envelope
+
+The Short Task request file itself is authored by Dot.
+
+For the Luna relay, Dot should provide the complete serialized request file as `request_content`.
+
+```json
+{
+  "protocol": "DOLUNA_RELAY_V1",
+  "repository": "OWNER/RUNTIME-REPO",
+  "branch": "main",
+  "task_id": "example-001",
+  "request_path": "requests/example-001/request.json",
+  "request_content": "<complete request.json file body authored by Dot>"
+}
+```
+
+Luna copies `request_content` to `request_path`. Luna does not derive or construct the Short Task request.
