@@ -6,20 +6,28 @@
 
 Dot owns the task reasoning and the next-action decision.
 
-Project path:
+Project paths:
 
 ```text
+READ:
+Dot -> Git state/results -> Dot
+
+WRITE / EXECUTE:
 Dot
- -> Luna relay
- -> requests/<task_id>/request.json
+ -> fully formed request
+ -> Luna Work relay
+ -> exact Git write to requests/<task_id>/request.json
  -> short-task workflow
  -> cah-shot
  -> runner/execute_request.ps1
  -> results/<task_id>/result.json
- -> Dot
+ -> Git
+ -> Dot reads the result directly
 ```
 
-The request/result files are the only semantic bridge Luna needs to understand.
+Dot performs repository reading, state interpretation, planning, and result evaluation directly against Git.
+
+Luna does not inspect Git to decide what to do. Luna receives a complete request from Dot and only performs the exact mutation needed to dispatch it.
 
 ## Allowed semantic work
 
@@ -52,7 +60,9 @@ You must not:
 - summarize or rewrite the payload;
 - alter command, shell, timeout, working directory, or metadata;
 - split or combine tasks;
+- inspect repository state to understand or plan the task;
 - inspect unrelated repository files;
+- read results on Dot's behalf during the relay turn;
 - browse for additional task information;
 - invoke Codex or another Worker;
 - start an alternative execution method;
