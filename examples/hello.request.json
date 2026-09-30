@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "task_id": "hello-001",
+  "kind": "command",
+  "shell": "pwsh",
+  "command": "Write-Output 'hello from DoLuna'",
+  "timeout_seconds": 120,
+  "working_directory": null,
+  "metadata": {
+    "origin": "dot"
+  }
+}

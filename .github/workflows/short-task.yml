@@ -1,0 +1,86 @@
+name: Short Task
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'requests/**/request.json'
+  workflow_dispatch:
+    inputs:
+      request_path:
+        description: 'Exact requests/<task_id>/request.json path'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: short-task-main
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    runs-on: cah-shot
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve exact request
+        id: request
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          if ("${{ github.event_name }}" -eq 'workflow_dispatch') {
+            $path = "${{ inputs.request_path }}"
+            if ($path -notmatch '^requests/[A-Za-z0-9][A-Za-z0-9._-]{0,79}/request\.json$') { throw "Invalid request_path: $path" }
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Request does not exist: $path" }
+            $paths = @($path)
+          } else {
+            $paths = @(git diff-tree --no-commit-id --name-only -r "$env:GITHUB_SHA" | Where-Object { $_ -match '^requests/[A-Za-z0-9][A-Za-z0-9._-]{0,79}/request\.json$' })
+          }
+          if ($paths.Count -ne 1) { throw "v1 requires exactly one request file per triggering commit; found $($paths.Count)." }
+          $path = $paths[0]
+          $taskId = Split-Path -Leaf (Split-Path -Parent $path)
+          "request_path=$path" >> $env:GITHUB_OUTPUT
+          "task_id=$taskId" >> $env:GITHUB_OUTPUT
+
+      - name: Execute bounded request
+        id: execute
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & ./runner/execute_request.ps1 -RequestPath "${{ steps.request.outputs.request_path }}" -RepoRoot "$env:GITHUB_WORKSPACE"
+          exit $LASTEXITCODE
+
+      - name: Commit durable result
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $taskId = "${{ steps.request.outputs.task_id }}"
+          $result = "results/$taskId/result.json"
+          if (-not (Test-Path -LiteralPath $result -PathType Leaf)) { throw "Executor did not produce durable result: $result" }
+          git config user.name "short-task-runner"
+          git config user.email "short-task-runner@users.noreply.github.com"
+          git add -- "$result"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "result: $taskId"
+            if ($LASTEXITCODE -ne 0) { throw 'result commit failed' }
+            git fetch origin main
+            if ($LASTEXITCODE -ne 0) { throw 'fetch before result push failed' }
+            git rebase origin/main
+            if ($LASTEXITCODE -ne 0) { throw 'rebase before result push failed' }
+            git push origin HEAD:main
+            if ($LASTEXITCODE -ne 0) { throw 'result push failed' }
+          }
+
+      - name: Propagate execution failure
+        if: steps.execute.outcome == 'failure'
+        shell: pwsh
+        run: |
+          throw 'Short Task command failed, timed out, or was invalid. Read the committed result.json.'
