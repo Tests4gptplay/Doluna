@@ -8,5 +8,9 @@ Read:
 Core flow:
 
 ```text
-Dot reads Git -> Dot decides -> Luna writes request -> Runner executes -> Dot reads result
+Dot reads Git
+-> Dot decides and produces the complete request file content
+-> Luna copies that content to Git
+-> Runner executes
+-> Dot reads result
 ```
