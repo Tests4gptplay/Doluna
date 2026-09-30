@@ -20,32 +20,27 @@ Understanding and deciding the business task belongs to Dot.
 
 ## Project structure Dot must understand
 
-DoLuna has four semantic layers:
+DoLuna has separate read and write/execute paths:
 
 ```text
+READ PATH
+Dot -> Git repository state / results -> Dot
+
+WRITE / EXECUTE PATH
 Dot
-  | owns planning, context, decisions
-  v
-Luna relay
-  | exact protocol forwarding only
-  v
-requests/<task_id>/request.json
-  |
-  v
-.github/workflows/short-task.yml
-  |
-  v
-cah-shot
-  |
-  v
-runner/execute_request.ps1
-  |
-  v
-results/<task_id>/result.json
-  |
-  v
-Dot evaluates result / decides next action
+  -> fully formed DoLuna envelope
+  -> Luna Work relay
+  -> exact Git write:
+     requests/<task_id>/request.json
+  -> .github/workflows/short-task.yml
+  -> cah-shot
+  -> runner/execute_request.ps1
+  -> results/<task_id>/result.json
+  -> Git
+  -> Dot reads result directly
 ```
+
+Dot is the Git reader and semantic owner. Luna is not a repository-inspection layer and is not a result-reading layer.
 
 Canonical files:
 
@@ -59,7 +54,7 @@ Canonical files:
 - `skills/index.json` — optional compact skill index for non-relay callers only.
 - `adapters/doluna/RELAY_PROMPT.md` — portable Luna relay prompt mirror.
 
-Dot should reason about the task and construct the request. Luna should not.
+Dot should read the relevant Git state directly, reason about the task, construct the complete request, and later read the result directly. Luna should only perform the exact Git mutation needed to submit that request.
 
 ## Canonical state flow
 
