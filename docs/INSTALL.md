@@ -1,101 +1,537 @@
-# Installation and deployment
+# DoLuna Installation
 
-DoLuna's source repository is public. Treat source distribution and private execution transport as separate concerns.
-
-## Recommended topology
+This document installs the complete DoLuna execution path:
 
 ```text
-public DoLuna source
+Dot
+ -> reads Git directly
+ -> creates the complete Short Task request content
+ -> Luna Work relay copies that content into Git
+ -> dedicated cah-shot Runner executes it
+ -> result.json is committed
+ -> Dot reads the result directly from Git
+```
+
+DoLuna does not require the full CAH Planner / Worker / Helper runtime.
+
+## 1. Components
+
+A working deployment needs:
+
+1. **Dot**
+   - reads repository state and results;
+   - decides the next action;
+   - authors the complete Short Task request file.
+
+2. **Luna Work relay**
+   - receives the complete Dot-authored request content;
+   - copies it to the exact Git request path;
+   - returns the Git write receipt.
+
+3. **Runtime Git repository**
+   - stores request and result state;
+   - triggers the Short Task workflow.
+
+4. **Dedicated Windows self-hosted Runner**
+   - registered specifically for Short Task execution;
+   - targeted by the `cah-shot` label;
+   - executes `runner/execute_request.ps1`.
+
+## 2. Recommended source/runtime split
+
+The DoLuna source repository can remain public.
+
+For real workloads, use a separate **private runtime repository**:
+
+```text
+Tests4gptplay/Doluna or another source repository
         |
-        | copy/deploy
+        | deploy the execution files
         v
-private runtime repository
+PRIVATE RUNTIME REPOSITORY
         |
+        +-- .github/workflows/short-task.yml
+        +-- runner/execute_request.ps1
+        +-- schema/request.schema.json
         +-- requests/
         +-- results/
-        +-- .github/workflows/short-task.yml
         |
         v
 dedicated cah-shot Runner
 ```
 
-This avoids committing real private commands, paths, stdout, or stderr to public history.
+Why separate them:
 
-## Dedicated Windows Runner
+- request files can contain real commands and project paths;
+- result files can contain stdout/stderr;
+- the Runner is an execution surface rather than documentation/source only.
 
-Use a separate Runner directory and identity for Short Task work.
+For a harmless smoke test, the same repository can be used directly, but do not put private workload data into a public repository.
 
-Register it with the custom label:
+## 3. Prepare the runtime repository
+
+Create or choose a private GitHub repository.
+
+Copy these files from DoLuna into its root:
 
 ```text
-cah-shot
+.github/workflows/short-task.yml
+runner/execute_request.ps1
+schema/request.schema.json
+docs/PROTOCOL.md
 ```
 
-Suppress normal default labels when practical.
+The workflow expects this repository-root layout.
 
-The workflow intentionally targets:
+The runtime repository will create these paths as tasks run:
+
+```text
+requests/<task_id>/request.json
+results/<task_id>/result.json
+```
+
+A request is submitted by creating a new request file.
+
+A result is returned by committing the matching result file.
+
+## 4. GitHub Actions write permission
+
+The workflow commits `results/<task_id>/result.json` back to the runtime repository.
+
+The workflow already declares:
+
+```yaml
+permissions:
+  contents: write
+```
+
+The repository must allow the workflow token to write repository contents.
+
+In GitHub repository settings, verify the repository/organization Actions policy does not force the workflow token to read-only access.
+
+The required path is:
+
+```text
+Repository
+ -> Settings
+ -> Actions
+ -> General
+ -> Workflow permissions
+```
+
+Use a configuration that permits the Short Task workflow to push its result commit.
+
+## 5. Install the dedicated Short Task Runner
+
+### 5.1 Do not reuse a general-purpose Runner
+
+DoLuna should have a dedicated Runner identity for Short Task work.
+
+Recommended shape:
+
+```text
+machine
+├─ other runners / tools
+└─ doluna-short-task runner
+   ├─ its own actions-runner directory
+   └─ custom label: cah-shot
+```
+
+Do not register the DoLuna Runner inside another Runner's installation directory.
+
+Do not point ordinary generic workflows at it.
+
+The purpose of the dedicated identity is simple:
+
+```text
+only workflows explicitly requesting cah-shot
+        ↓
+can consume this Runner
+```
+
+### 5.2 Create the Runner in GitHub
+
+In the **private runtime repository**:
+
+```text
+Settings
+ -> Actions
+ -> Runners
+ -> New self-hosted runner
+```
+
+Select:
+
+- Windows
+- the machine's actual architecture, normally x64
+
+GitHub will show the current download, extraction, and registration commands.
+
+Use those GitHub-generated commands rather than copying an old Runner version number from this document.
+
+### 5.3 Use an independent directory
+
+Create a dedicated directory for this Runner.
+
+Example only:
+
+```text
+D:\DoLuna\actions-runner-shot
+```
+
+Do not use a personal user-profile/Desktop path as the canonical installation location.
+
+The exact drive and directory are deployment choices; DoLuna does not require the example path.
+
+### 5.4 Register with only the Short Task label
+
+During initial Runner configuration, add:
+
+```text
+--labels cah-shot --no-default-labels
+```
+
+For Windows, the resulting registration command has this shape:
+
+```powershell
+.\config.cmd --url <RUNTIME_REPOSITORY_URL> --token <GITHUB_GENERATED_TOKEN> --name doluna-shot-01 --labels cah-shot --no-default-labels
+```
+
+Use the real URL and temporary token generated by GitHub.
+
+Do not commit the registration token.
+
+The important properties after registration are:
+
+```text
+runner name: deployment-defined, e.g. doluna-shot-01
+custom label: cah-shot
+default labels: disabled
+repository: the private runtime repository
+```
+
+The workflow intentionally uses:
 
 ```yaml
 runs-on: cah-shot
 ```
 
-Use GitHub's current official self-hosted Runner package and a one-time repository registration token. Never commit the token.
+This gives DoLuna a dedicated execution lane instead of allowing normal `self-hosted / Windows / X64` jobs to select it accidentally.
 
-## Runtime environment
+### 5.5 Verify the Runner identity
 
-Configure these outside Git:
-
-```text
-SHORT_TASK_CACHE_ROOT=<persistent cache root>
-SHORT_TASK_ALLOWED_ROOTS=<semicolon-separated absolute roots>
-```
-
-Example only:
+In:
 
 ```text
-SHORT_TASK_CACHE_ROOT=D:\ShortTask\cache
-SHORT_TASK_ALLOWED_ROOTS=D:\Projects;D:\ShortTask\work
+Settings -> Actions -> Runners
 ```
 
-The repository checkout and cache root are automatically allowed.
+open the Runner and confirm:
 
-If `SHORT_TASK_CACHE_ROOT` is absent, v1 falls back to `RUNNER_TEMP\short-task-cache`.
+- it belongs to the intended runtime repository;
+- the expected Runner name is shown;
+- `cah-shot` is assigned;
+- it does not carry unwanted general-purpose routing labels;
+- status becomes online after the Listener starts.
 
-## GitHub Actions permission
+Runner online status proves only that GitHub can reach it. It does not prove the Short Task path works; the smoke test below does that.
 
-The runtime workflow needs permission to commit `results/<task_id>/result.json`.
+## 6. Configure the Runner execution roots
 
-Do not expose request-write authority to untrusted users: accepted request write access is effectively command authority on the attached Runner within its configured roots.
-
-## Smoke test
-
-Create:
+DoLuna uses two environment variables:
 
 ```text
-requests/smoke-hello-001/request.json
+SHORT_TASK_CACHE_ROOT
+SHORT_TASK_ALLOWED_ROOTS
 ```
 
-from `examples/hello.request.json`, changing `task_id` to `smoke-hello-001`.
+### SHORT_TASK_CACHE_ROOT
 
-Verify:
+Persistent local Short Task cache/checkpoint root.
 
-1. exactly one Short Task run starts;
-2. it lands on the `cah-shot` Runner;
-3. `results/smoke-hello-001/result.json` is committed;
-4. result status is `succeeded`;
-5. exit code is `0`.
+Example:
 
-Runner online status alone is not acceptance.
+```text
+D:\DoLuna\cache
+```
 
-## Luna / Work side
+Each task gets:
 
-The Luna relay should receive only the minimum repository write capability needed for the request surface.
+```text
+<SHORT_TASK_CACHE_ROOT>\<task_id>\
+```
 
-Its semantic contract is in:
+This is local continuity/scratch space. It is not the durable completion record.
+
+### SHORT_TASK_ALLOWED_ROOTS
+
+Semicolon-separated absolute directories that requests are allowed to use as an explicit `working_directory`.
+
+Example:
+
+```text
+D:\Projects;E:\Workloads
+```
+
+The executor automatically also permits:
+
+- its checked-out runtime repository;
+- the configured cache root.
+
+An explicit working directory outside the allowed set is rejected.
+
+### Example interactive Runner launch
+
+For an initial Windows deployment, a simple wrapper can set the environment before launching GitHub's `run.cmd`:
+
+```bat
+@echo off
+set "SHORT_TASK_CACHE_ROOT=D:\DoLuna\cache"
+set "SHORT_TASK_ALLOWED_ROOTS=D:\Projects;E:\Workloads"
+call run.cmd
+```
+
+Keep machine-specific values outside the Git repository.
+
+If the Runner is installed as a Windows service instead, configure the equivalent environment for the service context and restart the service before testing.
+
+For tasks that require an interactive desktop or GUI application, run the Runner in an appropriate interactive Windows session rather than assuming a background service has desktop access.
+
+## 7. Required host tools
+
+The base executor expects:
+
+- Windows;
+- PowerShell 7 / `pwsh.exe`;
+- `cmd.exe`;
+- GitHub Actions Runner.
+
+Task-specific tools are separate.
+
+For example, a Short Task may additionally require:
+
+- Python;
+- Git;
+- Blender;
+- Unreal Engine;
+- Node.js;
+- another local executable.
+
+DoLuna does not install every possible task tool automatically.
+
+The task command may use a tool only when that tool is already installed/authorized on the Runner host or installed through the deployment's normal authorized process.
+
+## 8. Start the dedicated Runner
+
+From its own Runner directory, start the listener using the GitHub Runner launch method selected during setup.
+
+For an interactive installation this is normally:
+
+```powershell
+.\run.cmd
+```
+
+Keep this Runner online when Dot may dispatch Short Tasks.
+
+A DoLuna deployment does not need a separate CAH Bridge, Planner process, Worker browser Project, or Helper process for this Short Task path.
+
+## 9. Configure Dot
+
+Dot is the semantic owner.
+
+Dot needs Git read access to the runtime repository so it can directly read:
+
+```text
+requests/<task_id>/request.json
+results/<task_id>/result.json
+```
+
+Dot should:
+
+1. inspect relevant Git/project state;
+2. decide the Short Task operation;
+3. serialize the **complete** request file content;
+4. create a DoLuna relay envelope containing that exact content;
+5. delegate the envelope to Luna Work;
+6. watch/read `results/<task_id>/result.json` directly;
+7. decide the next action.
+
+Dot does not ask Luna to design the request.
+
+## 10. Configure Luna Work relay
+
+The Luna relay needs the Git write capability required to create:
+
+```text
+requests/<task_id>/request.json
+```
+
+Its semantic contract is:
 
 - `AGENTS.md`
 - `AGENT.md`
 - `FOREGROUND.md`
 - `adapters/doluna/RELAY_PROMPT.md`
 
-Do not give Luna direct shell credentials merely to implement the relay.
+Dot sends an envelope shaped like:
+
+```json
+{
+  "protocol": "DOLUNA_RELAY_V1",
+  "repository": "OWNER/RUNTIME-REPO",
+  "branch": "main",
+  "task_id": "smoke-hello-001",
+  "request_path": "requests/smoke-hello-001/request.json",
+  "request_content": "<complete request.json text authored by Dot>"
+}
+```
+
+Luna copies `request_content` into `request_path` and returns the Git write receipt.
+
+Luna does not build the request body.
+
+## 11. First smoke test
+
+Use a harmless command first.
+
+Dot should author this complete request:
+
+```json
+{
+  "v": 1,
+  "task_id": "smoke-hello-001",
+  "kind": "command",
+  "shell": "pwsh",
+  "command": "Write-Output 'hello from DoLuna'",
+  "timeout_seconds": 120,
+  "working_directory": null,
+  "metadata": {
+    "origin": "dot-smoke-test"
+  }
+}
+```
+
+Luna copies it to:
+
+```text
+requests/smoke-hello-001/request.json
+```
+
+Then verify the full mechanical chain:
+
+```text
+request commit
+ -> Short Task workflow starts
+ -> job selects cah-shot
+ -> Runner executes command
+ -> result is created
+ -> workflow commits result
+ -> Dot reads result
+```
+
+Expected result:
+
+```json
+{
+  "task_id": "smoke-hello-001",
+  "status": "succeeded",
+  "exit_code": 0,
+  "timed_out": false
+}
+```
+
+The actual result also contains timestamps and compact output fields.
+
+The smoke test passes only when `results/smoke-hello-001/result.json` is visible in Git and contains the expected successful execution result.
+
+## 12. Verify failure return
+
+Also run one harmless intentional failure, for example a command that exits nonzero.
+
+The expected chain is:
+
+```text
+command fails
+ -> executor still writes result.json
+ -> workflow commits result.json
+ -> workflow may finish red
+ -> Dot reads terminal failure from Git
+```
+
+This verifies that result return is not success-only.
+
+## 13. Optional payload-integrity test
+
+Issue #1 defines the Pelican relay-transparency experiment.
+
+For strict relay verification, Dot can calculate a SHA-256 for its complete request content, then compare that with:
+
+- the request file committed after Luna;
+- the content consumed by the Runner.
+
+The intended proof is:
+
+```text
+Dot-authored content
+        ==
+Git request content
+        ==
+Runner-consumed content
+```
+
+This is optional for basic installation but useful for proving that Luna behaved as a transparent copy relay.
+
+## 14. Normal operation
+
+After installation, the steady-state loop is intentionally small:
+
+```text
+Dot reads Git
+ -> Dot authors request content
+ -> Luna copies request to Git
+ -> dedicated cah-shot executes
+ -> result returns to Git
+ -> Dot reads result
+```
+
+There is no separate result notification daemon required when Dot itself remains responsible for watching the known result path.
+
+## 15. Security boundary
+
+A Short Task request is an authorized command request to the self-hosted machine.
+
+Treat write access to the runtime request surface as execution authority.
+
+Keep these outside Git:
+
+- GitHub Runner registration tokens;
+- account credentials;
+- cookies/session data;
+- private keys;
+- machine secrets.
+
+Do not use an untrusted pull request workflow on the same privileged `cah-shot` Runner.
+
+Keep the allowed-root set no broader than the workloads that DoLuna actually needs.
+
+## 16. Installation acceptance checklist
+
+A deployment is ready when all of these are true:
+
+- [ ] private runtime repository exists;
+- [ ] Short Task workflow and executor are at repository root paths;
+- [ ] Actions can commit result files;
+- [ ] dedicated Runner is registered to the correct runtime repository;
+- [ ] dedicated Runner has `cah-shot`;
+- [ ] general-purpose workflows cannot accidentally select that Runner;
+- [ ] cache root is configured;
+- [ ] allowed roots are configured;
+- [ ] `pwsh.exe` is available;
+- [ ] Runner listener is online;
+- [ ] Dot can read the runtime repository;
+- [ ] Luna can create the exact request file supplied by Dot;
+- [ ] successful smoke request produces a Git result;
+- [ ] failed smoke request also produces a Git result;
+- [ ] Dot can read both result states directly.
+
+Once this checklist passes, the complete DoLuna path is installed.
