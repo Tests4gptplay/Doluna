@@ -42,7 +42,7 @@
 The project intentionally separates four concerns:
 
 - **Dot** — reads Git directly, owns context/planning/decisions, and reads/evaluates durable results directly.
-- **Luna** — write/dispatch relay only; it receives a fully formed request from Dot and performs the required Git mutation.
+- **Luna** — copy/dispatch relay only; Dot supplies the complete request file content and Luna copies that content to the requested Git path.
 - **Git/request-result transport** — durable state, request, and result surface.
 - **Short Task Runner** — deterministic host execution.
 
@@ -59,13 +59,13 @@ Instead, the intended loop is:
 ```text
 Dot reads Git directly
   -> Dot decides
-  -> Luna writes exact request to Git
+  -> Luna copies Dot's exact request content to Git
   -> Runner executes
   -> Runner writes result to Git
   -> Dot reads Git directly and evaluates
 ```
 
-Luna should not inspect a project, plan a repair, choose a command, or reason about the host task. It should only carry an already-decided request across the boundary.
+Luna should not inspect a project, plan a repair, choose a command, construct request fields, or reason about the host task. Dot supplies the complete request file content; Luna only copies it across the boundary.
 
 ## What Luna must never do
 
